@@ -12,6 +12,8 @@ jobs:
       - run: npm install
       - name: Siapkan icon
         run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
           IMG=$(ls assets/*.jpg assets/*.jpeg assets/*.png assets/*.webp 2>/dev/null | head -1)
           echo "Pakai foto: $IMG"
           convert "${IMG}[0]" -background white -gravity center -resize 1024x1024 -extent 1024x1024 PNG32:assets/icon-only.png
