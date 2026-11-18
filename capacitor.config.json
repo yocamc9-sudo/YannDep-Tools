@@ -2,5 +2,6 @@
   "appId": "my.id.yanndeptoolsv3",
   "appName": "YannDepTools",
   "webDir": "www",
-  "server": { "url": "https://yanndeptoolsv3.my.id" }
+  "server": { "url": "https://yanndeptoolsv3.my.id" },
+  "android": { "allowMixedContent": true }
 }
