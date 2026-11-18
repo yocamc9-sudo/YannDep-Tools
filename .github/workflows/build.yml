@@ -14,10 +14,52 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y imagemagick
-          IMG=$(ls assets/*.jpg assets/*.jpeg assets/*.png assets/*.webp 2>/dev/null | head -1)
+          IMG=$(ls assets/*.jpg assets/*.jpeg assets/*.png assets/*.webp 2>/dev/null | grep -v 'icon-' | head -1)
           echo "Pakai foto: $IMG"
           convert "${IMG}[0]" -background white -gravity center -resize 1024x1024 -extent 1024x1024 PNG32:assets/icon-only.png
+          convert "${IMG}[0]" -background none -gravity center -resize 680x680 -extent 1024x1024 PNG32:assets/icon-foreground.png
+          convert -size 1024x1024 xc:white PNG32:assets/icon-background.png
       - run: npx cap add android
+      - name: Aktifkan download dan gambar
+        run: |
+          cat > android/app/src/main/java/my/id/yanndeptoolsv3/MainActivity.java <<'EOF'
+          package my.id.yanndeptoolsv3;
+
+          import android.app.DownloadManager;
+          import android.content.Context;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.webkit.CookieManager;
+          import android.webkit.URLUtil;
+          import android.webkit.WebSettings;
+          import android.widget.Toast;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              CookieManager.getInstance().setAcceptThirdPartyCookies(getBridge().getWebView(), true);
+              getBridge().getWebView().getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+              getBridge().getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+                try {
+                  DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                  String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                  req.setMimeType(mimeType);
+                  req.addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url));
+                  req.addRequestHeader("User-Agent", userAgent);
+                  req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                  req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                  ((DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE)).enqueue(req);
+                  Toast.makeText(this, "Mengunduh " + name, Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                  Toast.makeText(this, "Gagal unduh: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+              });
+            }
+          }
+          EOF
       - run: npx capacitor-assets generate --android
       - run: npx cap sync android
       - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
