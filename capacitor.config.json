@@ -1,0 +1,6 @@
+{
+  "appId": "my.id.yanndeptoolsv3",
+  "appName": "YannDepTools",
+  "webDir": "www",
+  "server": { "url": "https://yanndeptoolsv3.my.id" }
+}
