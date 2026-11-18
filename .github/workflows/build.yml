@@ -20,30 +20,178 @@ jobs:
           convert "${IMG}[0]" -background none -gravity center -resize 680x680 -extent 1024x1024 PNG32:assets/icon-foreground.png
           convert -size 1024x1024 xc:white PNG32:assets/icon-background.png
       - run: npx cap add android
-      - name: Aktifkan download dan gambar
+      - name: Izin
+        run: |
+          sed -i 's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+      - name: Kode native
         run: |
           cat > android/app/src/main/java/my/id/yanndeptoolsv3/MainActivity.java <<'EOF'
           package my.id.yanndeptoolsv3;
 
           import android.app.DownloadManager;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.content.ContentValues;
           import android.content.Context;
+          import android.content.Intent;
           import android.net.Uri;
+          import android.os.Build;
           import android.os.Bundle;
           import android.os.Environment;
+          import android.provider.MediaStore;
+          import android.util.Base64;
           import android.webkit.CookieManager;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.MimeTypeMap;
           import android.webkit.URLUtil;
+          import android.webkit.WebResourceError;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
           import android.webkit.WebSettings;
+          import android.webkit.WebView;
           import android.widget.Toast;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.app.NotificationCompat;
+          import androidx.core.app.NotificationManagerCompat;
           import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.BridgeWebViewClient;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.OutputStream;
 
           public class MainActivity extends BridgeActivity {
+            static final String CH = "musik";
+            static final String SITE = "https://yanndeptoolsv3.my.id";
+            static final String ERR = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
+              + "<body style='margin:0;height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0b0f19;color:#fff;font-family:sans-serif;text-align:center;padding:24px;box-sizing:border-box'>"
+              + "<h2 style='margin:0 0 8px'>Tidak ada koneksi</h2>"
+              + "<p style='color:#9aa4b2;margin:0 0 24px'>Periksa internet kamu lalu coba lagi.</p>"
+              + "<button onclick='YndNotif.retry()' style='background:#3b82f6;color:#fff;border:0;border-radius:12px;padding:12px 28px;font-size:16px'>Coba lagi</button>"
+              + "</body></html>";
+            static final String JS = "(function(){if(window.__ynd)return;window.__ynd=1;"
+              + "var oc=URL.createObjectURL;window.__bl={};URL.createObjectURL=function(b){var u=oc.call(URL,b);window.__bl[u]=b;return u;};"
+              + "function t(e){var m=navigator.mediaSession&&navigator.mediaSession.metadata;return (m&&m.title)||document.title||'Musik';}"
+              + "var op=HTMLMediaElement.prototype.play;"
+              + "HTMLMediaElement.prototype.play=function(){try{YndNotif.play(t(this));}catch(x){}return op.apply(this,arguments);};"
+              + "var ou=HTMLMediaElement.prototype.pause;"
+              + "HTMLMediaElement.prototype.pause=function(){try{YndNotif.stop();}catch(x){}return ou.apply(this,arguments);};"
+              + "document.addEventListener('ended',function(){try{YndNotif.stop();}catch(x){}},true);"
+              + "})();";
+
+            class Notif {
+              @JavascriptInterface public void play(String title) { show(title); }
+              @JavascriptInterface public void stop() { NotificationManagerCompat.from(MainActivity.this).cancel(1); }
+              @JavascriptInterface public void retry() {
+                runOnUiThread(() -> getBridge().getWebView().loadUrl(SITE));
+              }
+              @JavascriptInterface public void saveBlob(String b64, String mime) {
+                try { save(Base64.decode(b64, Base64.DEFAULT), mime); }
+                catch (Exception e) { toast("Gagal menyimpan file"); }
+              }
+              @JavascriptInterface public void fail() { toast("Gagal menyimpan file"); }
+            }
+
+            void toast(String s) {
+              runOnUiThread(() -> Toast.makeText(this, s, Toast.LENGTH_SHORT).show());
+            }
+
+            void save(byte[] d, String mime) throws Exception {
+              if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
+              String ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime);
+              if (ext == null) ext = "bin";
+              String name = "yanndeptools_" + System.currentTimeMillis() + "." + ext;
+              boolean img = mime.startsWith("image/");
+              if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, img ? Environment.DIRECTORY_PICTURES + "/YannDepTools" : Environment.DIRECTORY_DOWNLOADS);
+                Uri col = img ? MediaStore.Images.Media.EXTERNAL_CONTENT_URI : MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                Uri u = getContentResolver().insert(col, v);
+                OutputStream os = getContentResolver().openOutputStream(u);
+                os.write(d);
+                os.close();
+              } else {
+                File dir = Environment.getExternalStoragePublicDirectory(img ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS);
+                dir.mkdirs();
+                File f = new File(dir, name);
+                FileOutputStream os = new FileOutputStream(f);
+                os.write(d);
+                os.close();
+                sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(f)));
+              }
+              toast(img ? "Gambar tersimpan di galeri" : "File tersimpan di Download");
+            }
+
+            void show(String title) {
+              Intent i = new Intent(this, MainActivity.class);
+              i.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+              PendingIntent pi = PendingIntent.getActivity(this, 0, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+              Notification n = new NotificationCompat.Builder(this, CH)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle("Sedang memutar")
+                .setContentText(title)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .build();
+              try { NotificationManagerCompat.from(this).notify(1, n); } catch (SecurityException e) {}
+            }
+
+            void showError(WebView view) {
+              view.loadDataWithBaseURL(null, ERR, "text/html", "utf-8", null);
+            }
+
             @Override
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
-              CookieManager.getInstance().setAcceptThirdPartyCookies(getBridge().getWebView(), true);
-              getBridge().getWebView().getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-              getBridge().getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+              if (Build.VERSION.SDK_INT >= 26) {
+                NotificationChannel ch = new NotificationChannel(CH, "Musik", NotificationManager.IMPORTANCE_LOW);
+                getSystemService(NotificationManager.class).createNotificationChannel(ch);
+              }
+              if (Build.VERSION.SDK_INT >= 33) {
+                ActivityCompat.requestPermissions(this, new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
+              } else if (Build.VERSION.SDK_INT < 29) {
+                ActivityCompat.requestPermissions(this, new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 2);
+              }
+              final WebView wv = getBridge().getWebView();
+              CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
+              wv.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+              wv.addJavascriptInterface(new Notif(), "YndNotif");
+              getBridge().setWebViewClient(new BridgeWebViewClient(getBridge()) {
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                  super.onPageFinished(view, url);
+                  view.evaluateJavascript(JS, null);
+                }
+                @Override
+                public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                  if (request.isForMainFrame()) showError(view);
+                }
+                @Override
+                public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse resp) {
+                  if (request.isForMainFrame() && resp.getStatusCode() >= 500) showError(view);
+                }
+              });
+              wv.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
                 try {
+                  if (url.startsWith("blob:")) {
+                    String js = "(async function(){try{var u='" + url + "';var b=(window.__bl&&window.__bl[u])?window.__bl[u]:await (await fetch(u)).blob();"
+                      + "var f=new FileReader();f.onloadend=function(){YndNotif.saveBlob(String(f.result).split(',')[1],b.type||'application/octet-stream');};"
+                      + "f.readAsDataURL(b);}catch(e){YndNotif.fail();}})()";
+                    wv.evaluateJavascript(js, null);
+                    return;
+                  }
+                  if (url.startsWith("data:")) {
+                    String head = url.substring(5, url.indexOf(','));
+                    String mime = head.split(";")[0];
+                    String body = url.substring(url.indexOf(',') + 1);
+                    byte[] d = head.contains("base64") ? Base64.decode(body, Base64.DEFAULT) : Uri.decode(body).getBytes("UTF-8");
+                    save(d, mime);
+                    return;
+                  }
                   DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
                   String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
                   req.setMimeType(mimeType);
@@ -52,9 +200,9 @@ jobs:
                   req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
                   req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
                   ((DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE)).enqueue(req);
-                  Toast.makeText(this, "Mengunduh " + name, Toast.LENGTH_SHORT).show();
+                  toast("Mengunduh " + name);
                 } catch (Exception e) {
-                  Toast.makeText(this, "Gagal unduh: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                  toast("Gagal menyimpan file");
                 }
               });
             }
